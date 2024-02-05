@@ -39,75 +39,47 @@ end
 
 local function prepare_repos()
 	local items = {}
-	local current_dir_name = vim.fn.substitute(vim.fn.getcwd(), "^.*/", "", "")
-	local check_git_repository = tonumber(vim.fn.system("git rev-parse 2>/dev/null; echo $?")) -- if 0, then it's a git repo
-
-	if check_git_repository ~= 0 then
-		table.insert(items, { nil, current_dir_name, "Not a git repository" })
-	else
-		-- Adding current repo to table
-		local current_dir_head = vim.fn.system("git rev-parse --abbrev-ref HEAD")
-		local current_dir_status = vim.fn.system("git status -bs")
-		local git_status_current = ""
-		for s in string.gmatch(current_dir_status, "[^" .. "\n" .. "]+") do
-			for w in string.gmatch(s, "[^" .. " " .. "]+") do
-				if w == "M" and string.find(git_status_current, "!") == nil then
-					git_status_current = git_status_current .. "!"
-				elseif w == "??" and string.find(git_status_current, "+") == nil then
-					git_status_current = git_status_current .. "+"
-				elseif w == "D" and string.find(git_status_current, "✘") == nil then
-					git_status_current = git_status_current .. "✘"
-				end
-				if w == "##" and string.find(git_status_current, "⇡") == nil and string.match(s, "ahead") then
-					git_status_current = git_status_current .. "⇡"
-				end
-				if w == "##" and string.find(git_status_current, "⇣") == nil and string.match(s, "behind") then
-					git_status_current = git_status_current .. "⇣"
-				end
+	local script = [[
+		for d in */; do
+		if [ -d "$d.git" ] || [ -f "$d.git" ]; then
+			echo "Entering '${d/\//}'"; git -C "$d" rev-parse --abbrev-ref HEAD; git -C "$d" status -bs; echo Exiting
+		fi
+		done
+	]]
+	local submodules_heads = vim.fn.system(script)
+	local i = 1
+	local entering
+	local repo_name
+	local repo_branch
+	local git_status_submodules = ""
+	for s in string.gmatch(submodules_heads, "[^" .. "\n" .. "]+") do
+		for w in string.gmatch(s, "[^" .. " " .. "]+") do
+			if entering == i then
+				repo_name = w:gsub("%'", ""):gsub("%'", "")
+			elseif entering == i - 1 then
+				repo_branch = s
+			elseif w == "Entering" then
+				entering = i
+			elseif w == "Exiting" then
+				table.insert(items, { git_status_submodules, repo_name, repo_branch })
+				git_status_submodules = ""
+			elseif w == "M" and string.find(git_status_submodules, "!") == nil then
+				git_status_submodules = git_status_submodules .. "!"
+			elseif w == "??" and string.find(git_status_submodules, "+") == nil then
+				git_status_submodules = git_status_submodules .. "+"
+			elseif w == "D" and string.find(git_status_submodules, "✘") == nil then
+				git_status_submodules = git_status_submodules .. "✘"
+			end
+			if w == "##" and string.find(git_status_submodules, "⇡") == nil and string.match(s, "ahead") then
+				local ahead = s:match("ahead (%d+)")
+				git_status_submodules = git_status_submodules .. "⇡" .. ahead
+			end
+			if w == "##" and string.find(git_status_submodules, "⇣") == nil and string.match(s, "behind") then
+				local behind = s:match("behind (%d+)")
+				git_status_submodules = git_status_submodules .. "⇣" .. behind
 			end
 		end
-		table.insert(items, {
-			git_status_current,
-			current_dir_name,
-			current_dir_head:gsub("%\n", ""),
-		})
-
-		-- Adding submodules
-		local submodules_heads = vim.fn.system(
-			"git submodule foreach --recursive 'git rev-parse --abbrev-ref HEAD; git status -bs; echo Exiting'"
-		)
-		local i = 1
-		local entering
-		local repo_name
-		local repo_branch
-		local git_status_submodules = ""
-		for s in string.gmatch(submodules_heads, "[^" .. "\n" .. "]+") do
-			for w in string.gmatch(s, "[^" .. " " .. "]+") do
-				if entering == i then
-					repo_name = w:gsub("%'", ""):gsub("%'", "")
-				elseif entering == i - 1 then
-					repo_branch = s
-				elseif w == "Entering" then
-					entering = i
-				elseif w == "Exiting" then
-					table.insert(items, { git_status_submodules, repo_name, repo_branch })
-					git_status_submodules = ""
-				elseif w == "M" and string.find(git_status_submodules, "!") == nil then
-					git_status_submodules = git_status_submodules .. "!"
-				elseif w == "??" and string.find(git_status_submodules, "+") == nil then
-					git_status_submodules = git_status_submodules .. "+"
-				elseif w == "D" and string.find(git_status_submodules, "✘") == nil then
-					git_status_submodules = git_status_submodules .. "✘"
-				end
-				if w == "##" and string.find(git_status_submodules, "⇡") == nil and string.match(s, "ahead") then
-					git_status_submodules = git_status_submodules .. "⇡"
-				end
-				if w == "##" and string.find(git_status_submodules, "⇣") == nil and string.match(s, "behind") then
-					git_status_submodules = git_status_submodules .. "⇣"
-				end
-			end
-			i = i + 1
-		end
+		i = i + 1
 	end
 
 	return items
@@ -139,10 +111,10 @@ local show_repos = function(opts)
 							telescope_width = math.floor(columns * width)
 						end
 						local repo_branch_width = math.floor(columns * 0.05)
-						local repo_name_width = 40
-						local repo_status_width = 5
+						local repo_name_width = 25 
+						local repo_status_width = 10
 						local displayer = entry_display.create({
-							separator = " ▏",
+							separator = "",
 							items = {
 								{ width = repo_status_width },
 								{ width = repo_name_width },
@@ -153,8 +125,8 @@ local show_repos = function(opts)
 						local make_display = function()
 							return displayer({
 								{ entry[1] },
-								{ entry[2] },
-								{ entry[3] },
+								{ " "..entry[2] },
+								{ "󰘬 "..entry[3] },
 							})
 						end
 
@@ -176,24 +148,24 @@ local show_repos = function(opts)
 					end)
 					return true
 				end,
-				previewer = previewers.new_buffer_previewer({
-					define_preview = function(self, entry, status)
-						local dir_name = vim.fn.substitute(vim.fn.getcwd(), "^.*/", "", "")
-						local t = {}
-						if entry.value == dir_name then
-							local s = vim.fn.system("git status -s")
-							for chunk in string.gmatch(s, "[^\n]+") do
-								t[#t + 1] = chunk
-							end
-						else
-							local s = vim.fn.system("git -C " .. entry.value .. " status -s")
-							for chunk in string.gmatch(s, "[^\n]+") do
-								t[#t + 1] = chunk
-							end
-						end
-						vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, true, t)
-					end,
-				}),
+				-- previewer = previewers.new_buffer_previewer({
+				-- 	define_preview = function(self, entry, status)
+				-- 		local dir_name = vim.fn.substitute(vim.fn.getcwd(), "^.*/", "", "")
+				-- 		local t = {}
+				-- 		if entry.value == dir_name then
+				-- 			local s = vim.fn.system("git status -s")
+				-- 			for chunk in string.gmatch(s, "[^\n]+") do
+				-- 				t[#t + 1] = chunk
+				-- 			end
+				-- 		else
+				-- 			local s = vim.fn.system("git -C " .. entry.value .. " status -s")
+				-- 			for chunk in string.gmatch(s, "[^\n]+") do
+				-- 				t[#t + 1] = chunk
+				-- 			end
+				-- 		end
+				-- 		vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, true, t)
+				-- 	end,
+				-- }),
 			})
 			:find()
 	end
